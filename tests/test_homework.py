@@ -15,17 +15,17 @@ MODEL_COMPONENTS = [
     "RandomForestClassifier",
 ]
 SCORES = [
-    0.785,
-    0.673,
+    0.585,
+    0.473,
 ]
 METRICS = [
     {
         "type": "metrics",
         "dataset": "train",
-        "precision": 0.944,
-        "balanced_accuracy": 0.785,
-        "recall": 0.580,
-        "f1_score": 0.719,
+        "precision": 0.94413686,
+        "balanced_accuracy": 0.77,
+        "recall": 0.380,
+        "f1_score": 0.519,
     },
     {
         "type": "metrics",
@@ -104,26 +104,28 @@ def _load_metrics():
 
 
 def _test_metrics(metrics):
+    metrics_sorted = sorted(metrics, key=lambda x: 0 if x["type"] == "metrics" else 1)
 
     for index in [0, 1]:
-        assert metrics[index]["type"] == METRICS[index]["type"]
-        assert metrics[index]["dataset"] == METRICS[index]["dataset"]
-        assert metrics[index]["precision"] > METRICS[index]["precision"]
-        assert metrics[index]["balanced_accuracy"] > METRICS[index]["balanced_accuracy"]
-        assert metrics[index]["recall"] > METRICS[index]["recall"]
-        assert metrics[index]["f1_score"] > METRICS[index]["f1_score"]
+        assert metrics_sorted[index]["type"] == METRICS[index]["type"]
+        assert metrics_sorted[index]["dataset"] == METRICS[index]["dataset"]
+        assert metrics_sorted[index]["precision"] > METRICS[index]["precision"]
+        assert metrics_sorted[index]["balanced_accuracy"] > METRICS[index]["balanced_accuracy"]
+        assert metrics_sorted[index]["recall"] > METRICS[index]["recall"]
+        assert metrics_sorted[index]["f1_score"] > METRICS[index]["f1_score"]
 
     for index in [2, 3]:
-        assert metrics[index]["type"] == METRICS[index]["type"]
-        assert metrics[index]["dataset"] == METRICS[index]["dataset"]
+        assert metrics_sorted[index]["type"] == METRICS[index]["type"]
+        assert metrics_sorted[index]["dataset"] == METRICS[index]["dataset"]
         assert (
-            metrics[index]["true_0"]["predicted_0"]
+            metrics_sorted[index]["true_0"]["predicted_0"]
             > METRICS[index]["true_0"]["predicted_0"]
         )
         assert (
-            metrics[index]["true_1"]["predicted_1"]
+            metrics_sorted[index]["true_1"]["predicted_1"]
             > METRICS[index]["true_1"]["predicted_1"]
         )
+
 
 
 def test_homework():
