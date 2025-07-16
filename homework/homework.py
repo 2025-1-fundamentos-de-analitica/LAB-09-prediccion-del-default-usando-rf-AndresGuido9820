@@ -57,18 +57,12 @@ from sklearn.metrics import make_scorer, balanced_accuracy_score
 import gzip
 import pickle
 import json
-from sklearn.metrics import (
-    precision_score,
-    balanced_accuracy_score,
-    recall_score,
-    f1_score,
-)
-
+from sklearn.metrics import precision_score, balanced_accuracy_score, recall_score, f1_score
 
 def load_and_preprocess():
     # Cargar los datos
-    df_train = pd.read_csv("files/input/train_data.csv.zip", compression="zip")
-    df_test = pd.read_csv("files/input/test_data.csv.zip", compression="zip")
+    df_train = pd.read_csv("files/input/train_data.csv.zip", compression='zip')
+    df_test = pd.read_csv("files/input/test_data.csv.zip", compression='zip')
 
     # Renombrar la columna objetivo
     df_train = df_train.rename(columns={"default payment next month": "default"})
@@ -87,13 +81,10 @@ def load_and_preprocess():
     df_test = df_test.dropna()
 
     return df_train, df_test
-
-
 #
 # Paso 2.
 # Divida los datasets en x_train, y_train, x_test, y_test.
 #
-
 
 def split_features_target(df_train, df_test):
     x_train = df_train.drop(columns=["default"])
@@ -101,7 +92,6 @@ def split_features_target(df_train, df_test):
     x_test = df_test.drop(columns=["default"])
     y_test = df_test["default"]
     return x_train, y_train, x_test, y_test
-
 
 # Paso 3.
 # Cree un pipeline para el modelo de clasificación. Este pipeline debe
@@ -111,46 +101,44 @@ def split_features_target(df_train, df_test):
 # - Ajusta un modelo de bosques aleatorios (rando forest).
 #
 def build_pipeline(x_train):
-    categorical_features = (
-        x_train.select_dtypes(include=["object", "category", "int64"])
-        .columns[x_train.nunique() < 10]
-        .tolist()
-    )
+    categorical_features = x_train.select_dtypes(include=["object", "category", "int64"]).columns[
+        x_train.nunique() < 10
+    ].tolist()
     preprocessor = ColumnTransformer(
         transformers=[
             ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
         ],
-        remainder="passthrough",
+        remainder="passthrough"
     )
-    pipeline = Pipeline(
-        [
-            ("preprocessor", preprocessor),
-            ("classifier", RandomForestClassifier(random_state=42)),
-        ]
-    )
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", RandomForestClassifier(random_state=42))
+    ])
     return pipeline
-
-
 #
 # Paso 4.
 # Optimice los hiperparametros del pipeline usando validación cruzada.
 # Use 10 splits para la validación cruzada. Use la función de precision
 # balanceada para medir la precisión del modelo.
 def optimize_hyperparameters(pipeline, x_train, y_train):
-    param_grid = {  # "classifier__n_estimators": [1]
-        "classifier__n_estimators": [100, 200],
+    param_grid = {#"classifier__n_estimators": [1]
+        "classifier__n_estimators": [100,200],
         "classifier__max_depth": [None],
         "classifier__max_samples": [0.6, 0.8],
         "classifier__min_samples_split": [2, 5],
-        "classifier__max_features": ["sqrt", "log2", 5, 8],
+        "classifier__max_features": ['sqrt','log2',5,8],
     }
     scorer = make_scorer(balanced_accuracy_score)
     grid_search = GridSearchCV(
-        pipeline, param_grid, cv=10, scoring=scorer, n_jobs=-1, verbose=4
+        pipeline,
+        param_grid,
+        cv=10,
+        scoring=scorer,
+        n_jobs=-1,
+        verbose=4
     )
     grid_search.fit(x_train, y_train)
     return grid_search, grid_search.best_params_
-
 
 # Ejemplo de uso:
 # pipeline = build_pipeline(x_train)
@@ -163,14 +151,12 @@ def optimize_hyperparameters(pipeline, x_train, y_train):
 def save_model(model, path="files/models/model.pkl.gz"):
     # Crear la carpeta si no existe
     os.makedirs(os.path.dirname(path), exist_ok=True)
-
+    
     # Guardar el modelo
     with gzip.open(path, "wb") as f:
         pickle.dump(model, f)
 
     print(f"Modelo guardado en {path}")
-
-
 # Paso 6.
 # Calcule las metricas de precision, precision balanceada, recall,
 # y f1-score para los conjuntos de entrenamiento y prueba.
@@ -184,18 +170,9 @@ def save_model(model, path="files/models/model.pkl.gz"):
 #
 import os
 import json
-from sklearn.metrics import (
-    precision_score,
-    balanced_accuracy_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
-)
+from sklearn.metrics import precision_score, balanced_accuracy_score, recall_score, f1_score, confusion_matrix
 
-
-def calcular_metricas(
-    modelo, X_train, y_train, X_test, y_test, ruta_salida="files/output/metrics.json"
-):
+def calcular_metricas(modelo, X_train, y_train, X_test, y_test, ruta_salida='files/output/metrics.json'):
     # Predecir
     y_pred_train = modelo.predict(X_train)
     y_pred_test = modelo.predict(X_test)
@@ -203,35 +180,33 @@ def calcular_metricas(
     # Función auxiliar para calcular métricas
     def calcular_metricas(y_true, y_pred, dataset_nombre):
         return {
-            "type": "metrics",
-            "dataset": dataset_nombre,
-            "precision": precision_score(y_true, y_pred, zero_division=0),
-            "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
-            "recall": recall_score(y_true, y_pred, zero_division=0),
-            "f1_score": f1_score(y_true, y_pred, zero_division=0),
+            'type': 'metrics',
+            'dataset': dataset_nombre,
+            'precision': precision_score(y_true, y_pred, zero_division=0),
+            'balanced_accuracy': balanced_accuracy_score(y_true, y_pred),
+            'recall': recall_score(y_true, y_pred, zero_division=0),
+            'f1_score': f1_score(y_true, y_pred, zero_division=0)
         }
 
     # Calcular métricas
     metricas = [
-        calcular_metricas(y_train, y_pred_train, "train"),
-        calcular_metricas(y_test, y_pred_test, "test"),
+        calcular_metricas(y_train, y_pred_train, 'train'),
+        calcular_metricas(y_test, y_pred_test, 'test')
     ]
 
     # Crear carpeta si no existe
     os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
 
     # Guardar en formato JSONL (una línea por métrica)
-    with open(ruta_salida, "w", encoding="utf-8") as f:  # w para sobrescribir
+    with open(ruta_salida, 'w', encoding='utf-8') as f:  # w para sobrescribir
         for entrada in metricas:
             json.dump(entrada, f)
-            f.write("\n")
+            f.write('\n')
 
     print(f"Métricas guardadas en {ruta_salida}")
 
 
-def agregar_matrices_confusion(
-    modelo, X_train, y_train, X_test, y_test, ruta_salida="files/output/metrics.json"
-):
+def agregar_matrices_confusion(modelo, X_train, y_train, X_test, y_test, ruta_salida='files/output/metrics.json'):
     # Predecir
     y_pred_train = modelo.predict(X_train)
     y_pred_test = modelo.predict(X_test)
@@ -240,45 +215,38 @@ def agregar_matrices_confusion(
     def formato_cm(y_true, y_pred, dataset_nombre):
         cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
         return {
-            "type": "cm_matrix",
-            "dataset": dataset_nombre,
-            "true_0": {"predicted_0": int(cm[0][0]), "predicted_1": int(cm[0][1])},
-            "true_1": {"predicted_0": int(cm[1][0]), "predicted_1": int(cm[1][1])},
+            'type': 'cm_matrix',
+            'dataset': dataset_nombre,
+            'true_0': {"predicted_0": int(cm[0][0]), "predicted_1": int(cm[0][1])},
+            'true_1': {"predicted_0": int(cm[1][0]), "predicted_1": int(cm[1][1])}
         }
 
     matrices = [
-        formato_cm(y_train, y_pred_train, "train"),
-        formato_cm(y_test, y_pred_test, "test"),
+        formato_cm(y_train, y_pred_train, 'train'),
+        formato_cm(y_test, y_pred_test, 'test')
     ]
 
     # Guardar en modo append, una línea por matriz
-    with open(ruta_salida, "a", encoding="utf-8") as f:
+    with open(ruta_salida, 'a', encoding='utf-8') as f:
         for entrada in matrices:
             json.dump(entrada, f)
-            f.write("\n")
+            f.write('\n')
 
     print(f"Matrices de confusión agregadas a {ruta_salida}")
 
+df_train, df_test = load_and_preprocess()
 
-datos_entrenamiento, datos_prueba = load_and_preprocess()
+X_train, y_train, X_test, y_test = split_features_target(df_train, df_test)
 
-x_entrenamiento, y_entrenamiento, x_prueba, y_prueba = split_features_target(
-    datos_entrenamiento, datos_prueba
-)
+pipeline = build_pipeline(X_train)
 
-flujo_trabajo = build_pipeline(x_entrenamiento)
-
-busqueda_hiperparametros, mejores_parametros = optimize_hyperparameters(
-    flujo_trabajo, x_entrenamiento, y_entrenamiento
-)
+gridsearch, best_params = optimize_hyperparameters(pipeline, X_train, y_train)
 
 # Ajustar el pipeline con los mejores hiperparámetros
-busqueda_hiperparametros.estimator.set_params(**mejores_parametros)
-busqueda_hiperparametros.estimator.fit(x_entrenamiento, y_entrenamiento)
-save_model(busqueda_hiperparametros)
+gridsearch.estimator.set_params(**best_params)
+gridsearch.estimator.fit(X_train, y_train)
+save_model(gridsearch)
 
-calcular_metricas(flujo_trabajo, x_entrenamiento, y_entrenamiento, x_prueba, y_prueba)
+calcular_metricas(pipeline, X_train, y_train, X_test, y_test)
 
-agregar_matrices_confusion(
-    flujo_trabajo, x_entrenamiento, y_entrenamiento, x_prueba, y_prueba
-)
+agregar_matrices_confusion(pipeline, X_train, y_train, X_test, y_test)
