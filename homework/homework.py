@@ -94,150 +94,391 @@
 #
 
 import pandas as pd
-import pickle
+import numpy as np
+import os
 import gzip
 import json
-import os
-from sklearn.ensemble import RandomForestClassifier
+import pickle
+
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import precision_score, recall_score, f1_score, balanced_accuracy_score, confusion_matrix
-from glob import glob
+from sklearn.metrics import (
+    precision_score,
+    balanced_accuracy_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
 
 
-def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, compression = 'zip')
+def cargar_y_limpiar(path):
+    """
+    Carga y limpia el dataset desde la ruta especificada.
+
+    La limpieza incluye:
+    - Renombrar la columna objetivo a 'default'.
+    - Eliminar la columna 'ID'.
+    - Eliminar registros con información no disponible. En este dataset,
+      los valores 0 en 'EDUCATION' y 'MARRIAGE' se consideran N/A.
+    - Agrupar los niveles de educación superiores (>4) en la categoría 4 ('others').
+    """
+    print(f"Cargando archivo: {path}")
+    
+    # Verificar que el archivo existe
+    if not os.path.exists(path):
+        print(f"ERROR: Archivo no encontrado - {path}")
+        # Buscar archivos alternativos
+        possible_files = [
+            path.replace('.zip', ''),
+            path.replace('.csv.zip', '.csv'),
+            path.replace('train_data.csv.zip', 'train.csv'),
+            path.replace('test_data.csv.zip', 'test.csv')
+        ]
+        
+        for alt_path in possible_files:
+            if os.path.exists(alt_path):
+                print(f"Usando archivo alternativo: {alt_path}")
+                path = alt_path
+                break
+        else:
+            raise FileNotFoundError(f"No se encontró ningún archivo de datos en: {path}")
+    
+    # Cargar archivo con o sin compresión
+    try:
+        if path.endswith('.zip'):
+            df = pd.read_csv(path, compression='zip')
+        else:
+            df = pd.read_csv(path)
+        print(f"Archivo cargado exitosamente: {df.shape}")
+    except Exception as e:
+        print(f"Error cargando archivo: {e}")
+        raise
+    
+    # Mostrar información del dataset original
+    print(f"Columnas originales: {list(df.columns)}")
+    print(f"Dimensiones originales: {df.shape}")
+    
+    # Renombrar columna objetivo
+    if "default payment next month" in df.columns:
+        df = df.rename(columns={"default payment next month": "default"})
+        print("✓ Columna objetivo renombrada a 'default'")
+    elif "default" not in df.columns:
+        print("WARNING: No se encontró la columna objetivo")
+    
+    # Eliminar columna ID si existe
+    if "ID" in df.columns:
+        df = df.drop(columns=["ID"])
+        print("✓ Columna ID eliminada")
+    
+    # Mostrar información antes de limpiar
+    print(f"Valores únicos en EDUCATION: {sorted(df['EDUCATION'].unique())}")
+    print(f"Valores únicos en MARRIAGE: {sorted(df['MARRIAGE'].unique())}")
+    
+    # Eliminar registros con información no disponible
+    # Los valores 0 en EDUCATION y MARRIAGE significan 'N/A'
+    antes_limpieza = len(df)
+    df = df[(df['EDUCATION'] != 0) & (df['MARRIAGE'] != 0)]
+    print(f"✓ Registros eliminados por EDUCATION=0 o MARRIAGE=0: {antes_limpieza - len(df)}")
+    
+    # Agrupar valores de EDUCATION > 4 en la categoría 4 ('others')
+    antes_agrupacion = df['EDUCATION'].value_counts().sort_index()
+    df['EDUCATION'] = df['EDUCATION'].apply(lambda x: 4 if x > 4 else x)
+    despues_agrupacion = df['EDUCATION'].value_counts().sort_index()
+    print(f"✓ Valores EDUCATION agrupados:")
+    print(f"  Antes: {dict(antes_agrupacion)}")
+    print(f"  Después: {dict(despues_agrupacion)}")
+    
+    # Eliminar cualquier valor NaN restante
+    antes_nan = len(df)
+    df = df.dropna()
+    print(f"✓ Registros eliminados por NaN: {antes_nan - len(df)}")
+    
+    print(f"Dimensiones finales: {df.shape}")
+    
+    # Verificar que tenemos la columna objetivo
+    if 'default' not in df.columns:
+        raise ValueError("No se encontró la columna 'default' en el dataset")
+    
+    # Mostrar distribución de la variable objetivo
+    print(f"Distribución de la variable objetivo:")
+    print(df['default'].value_counts().sort_index())
+    
     return df
 
-def clean_data(DataFrame: pd.DataFrame) -> pd.DataFrame:
-    DataFrame.drop(columns = 'ID', inplace = True)
-    DataFrame.rename(columns = {'default payment next month': 'default'},
-                        inplace = True)
-    DataFrame['EDUCATION'] = DataFrame['EDUCATION'].apply(lambda x: 4 if x >= 4 else x).astype('category')
-    DataFrame = DataFrame.query('EDUCATION != 0 and MARRIAGE != 0')
-    return DataFrame
 
-def features_target_split(DataFrame: pd.DataFrame) -> tuple:
-    return DataFrame.drop(columns = 'default'), DataFrame['default']
+def dividir_xy(df):
+    """Divide el DataFrame en características (X) y variable objetivo (y)."""
+    X = df.drop(columns=["default"])
+    y = df["default"]
+    print(f"Características (X): {X.shape}")
+    print(f"Variable objetivo (y): {y.shape}")
+    return X, y
 
-def make_pipeline(estimator: RandomForestClassifier, cat_features: list, num_features: list) -> Pipeline:
-    preprocessor = ColumnTransformer(
-        transformers = [
-            ('cat', OneHotEncoder(handle_unknown = 'ignore'), cat_features),
-            ('num', 'passthrough', num_features)
-        ]
-    )
 
-    pipeline = Pipeline(
-        steps = [
-            ('preprocessor', preprocessor),
-            ('classifier', estimator)
-        ],
-        verbose = False
-    )
-
-    return pipeline
-
-def make_grid_search(estimator: Pipeline, param_grid: dict, cv = 10) -> GridSearchCV:
-    grid_search = GridSearchCV(
-        estimator = estimator,
-        param_grid = param_grid,
-        cv = cv,
-        scoring = 'balanced_accuracy',
-        n_jobs = -1
-    )
-    return grid_search
-
-def save_estimator(path: str, estimator: Pipeline) -> None:
-    with gzip.open(path, 'wb') as file:
-        pickle.dump(estimator, file)
-
-def eval_model(estimator: Pipeline, features: pd.DataFrame, target: pd.Series, name: str) -> dict:
-    y_pred = estimator.predict(features)
-    metrics = {
-        'type': 'metrics',
-        'dataset': name,
-        'precision': precision_score(target, y_pred),
-        'balanced_accuracy': balanced_accuracy_score(target, y_pred),
-        'recall': recall_score(target, y_pred),
-        'f1_score': f1_score(target, y_pred)
-    }
-    return metrics
+def crear_modelo():
+    """
+    Crea un pipeline de preprocesamiento y modelado con GridSearchCV
+    para la optimización de hiperparámetros.
+    """
+    print("Creando pipeline de ML...")
     
-def save_metrics(path: str, train_metrics: dict, test_metrics: dict) -> None:
-    with open(path, 'w') as file:
-        file.write(json.dumps(train_metrics) + '\n')
-        file.write(json.dumps(test_metrics) + '\n')
-
-def confusion_mtrx(estimator: Pipeline, features: pd.DataFrame, target: pd.Series, name: str) -> dict:
-    y_pred = estimator.predict(features)
-    cm = confusion_matrix(target, y_pred)
-    mtrx = {
-        'type': 'cm_matrix',
-        'dataset': name,
-        'true_0': {'predicted_0': int(cm[0, 0]),
-                    'predicted_1': int(cm[0, 1])},
-        'true_1': {'predicted_0': int(cm[1, 0]),
-                    'predicted_1': int(cm[1, 1])}
-    }
-    return mtrx
-
-def save_cm(path: str, train_mtrx: dict, test_mtrx: dict) -> None:
-    with open(path, 'a') as file:
-        file.write(json.dumps(train_mtrx) + '\n')
-        file.write(json.dumps(test_mtrx))
-
-def create_out_dir(out_dir: str) -> None:
-        if os.path.exists(out_dir):
-            for file in glob(f'{out_dir}/*'):
-                os.remove(file)
-            os.rmdir(out_dir)
-        os.makedirs(out_dir)
-
-def run():
-    in_path = 'files/input'
-    out_path = 'files/output'
-    mod_path = 'files/models'
-
-    train = clean_data(load_data(f'{in_path}/train_data.csv.zip'))
-    test = clean_data(load_data(f'{in_path}/test_data.csv.zip'))
-
-    x_train, y_train = features_target_split(train)
-    x_test, y_test = features_target_split(test)
-
-    cat_features = [col for col in x_test.columns if x_test[col].dtype == 'category']
-    num_features = [col for col in x_test.columns if x_test[col].dtype != 'category']
-
-    pipeline = make_pipeline(RandomForestClassifier(), cat_features, num_features)
+    # Variables categóricas para one-hot encoding
+    cat_features = ["SEX", "EDUCATION", "MARRIAGE"]
     
+    # Variables numéricas
+    num_features = ["LIMIT_BAL", "AGE", "PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6",
+                    "BILL_AMT1", "BILL_AMT2", "BILL_AMT3", "BILL_AMT4", "BILL_AMT5", "BILL_AMT6",
+                    "PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6"]
+    
+    # Preprocessor para variables categóricas y numéricas
+    preprocessor = ColumnTransformer([
+        ("cat", OneHotEncoder(handle_unknown="ignore", drop="first"), cat_features),
+        ("num", StandardScaler(), num_features)
+    ])
+    
+    # Pipeline con preprocessor y clasificador
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", RandomForestClassifier(random_state=42, class_weight='balanced'))
+    ])
+    
+    # Parámetros más amplios para mejorar el rendimiento
     param_grid = {
-    'classifier__n_estimators': [200],
-    'classifier__max_depth': [35],
-    'classifier__class_weight': ['balanced'],
-    'classifier__max_features': ['log2'],
-}
-    estimator = make_grid_search(
-        pipeline,
-        param_grid,
-        10
-    )
-    estimator.fit(x_train, y_train)
-
-    create_out_dir(mod_path)
-    create_out_dir(out_path)
-
-    save_estimator(f'{mod_path}/model.pkl.gz', estimator)
-
-    train_metrics = eval_model(estimator, x_train, y_train, 'train')
-    test_metrics = eval_model(estimator, x_test, y_test, 'test')
-    save_metrics(f'{out_path}/metrics.json', train_metrics, test_metrics)
-
-    train_cm = confusion_mtrx(estimator, x_train, y_train, 'train')
-    test_cm = confusion_mtrx(estimator, x_test, y_test, 'test')
-    save_cm(f'{out_path}/metrics.json', train_cm, test_cm)
+        "classifier__n_estimators": [200, 30],
+        "classifier__max_depth": [10, 15, 20, None],
+        "classifier__min_samples_split": [2, 5],
+        "classifier__min_samples_leaf": [1, 2, 4],
+        "classifier__max_features": ['sqrt', 'log2', None]
+    }
     
+    print(f"Parámetros a optimizar: {param_grid}")
+    
+    # GridSearchCV con validación cruzada
+    grid = GridSearchCV(
+        pipeline,
+        param_grid=param_grid,
+        scoring="balanced_accuracy",
+        cv=10,
+        n_jobs=-1,
+        verbose=1
+    )
+    
+    return grid
 
-if __name__ == '__main__':
-    run()
+
+def guardar_modelo(model, ruta):
+    """Guarda el modelo entrenado en la ruta especificada, comprimido con gzip."""
+    print(f"Guardando modelo en: {ruta}")
+    
+    try:
+        # Crear directorio si no existe
+        dir_path = os.path.dirname(ruta)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+            print(f"✓ Directorio creado/verificado: {dir_path}")
+        
+        # Guardar modelo comprimido
+        with gzip.open(ruta, "wb") as f:
+            pickle.dump(model, f)
+        
+        # Verificar que el archivo fue creado correctamente
+        if os.path.exists(ruta):
+            size = os.path.getsize(ruta)
+            print(f"✓ Modelo guardado exitosamente: {ruta} ({size} bytes)")
+        else:
+            raise FileNotFoundError(f"El archivo no fue creado: {ruta}")
+            
+    except Exception as e:
+        print(f"✗ Error guardando modelo: {e}")
+        raise
+
+
+def guardar_metricas(model, x_train, y_train, x_test, y_test, ruta):
+    """
+    Calcula y guarda las métricas de evaluación y las matrices de confusión
+    para los conjuntos de entrenamiento y prueba en un archivo JSON.
+    """
+    print(f"Calculando métricas y guardando en: {ruta}")
+    
+    try:
+        # Crear directorio si no existe
+        dir_path = os.path.dirname(ruta)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+            print(f"✓ Directorio creado/verificado: {dir_path}")
+        
+        resultados = []
+
+        # Calcular métricas para train y test
+        for x, y, name in [(x_train, y_train, "train"), (x_test, y_test, "test")]:
+            print(f"Calculando métricas para {name}...")
+            
+            # Hacer predicciones
+            y_pred = model.predict(x)
+            
+            # Calcular métricas
+            precision = precision_score(y, y_pred, average='binary')
+            balanced_acc = balanced_accuracy_score(y, y_pred)
+            recall = recall_score(y, y_pred, average='binary')
+            f1 = f1_score(y, y_pred, average='binary')
+            
+            print(f"  Precision: {precision:.4f}")
+            print(f"  Balanced Accuracy: {balanced_acc:.4f}")
+            print(f"  Recall: {recall:.4f}")
+            print(f"  F1-Score: {f1:.4f}")
+            
+            # Agregar métricas
+            resultados.append({
+                "type": "metrics",
+                "dataset": name,
+                "precision": float(precision),
+                "balanced_accuracy": float(balanced_acc),
+                "recall": float(recall),
+                "f1_score": float(f1),
+            })
+
+            # Calcular matriz de confusión
+            cm = confusion_matrix(y, y_pred)
+            print(f"  Matriz de confusión:")
+            print(f"    {cm}")
+            
+            # Agregar matriz de confusión (formato corregido)
+            resultados.append({
+                "type": "cm_matrix",
+                "dataset": name,
+                "true_0": {
+                    "predicted_0": int(cm[0][0]),
+                    "predicted_1": int(cm[0][1])
+                },
+                "true_1": {
+                    "predicted_0": int(cm[1][0]),
+                    "predicted_1": int(cm[1][1])
+                }
+            })
+
+        # Guardar resultados en archivo JSON
+        with open(ruta, "w", encoding="utf-8") as f:
+            for linea in resultados:
+                json.dump(linea, f, ensure_ascii=False)
+                f.write("\n")
+        
+        print(f"✓ Métricas guardadas exitosamente en: {ruta}")
+        
+    except Exception as e:
+        print(f"✗ Error guardando métricas: {e}")
+        raise
+
+
+def main():
+    """
+    Función principal que orquesta la carga de datos, entrenamiento del modelo,
+    y guardado de resultados.
+    """
+    print("=== INICIANDO PROCESO DE MACHINE LEARNING ===")
+    
+    try:
+        # Verificar estructura de directorios
+        print("\n1. Verificando estructura de directorios...")
+        print(f"Directorio actual: {os.getcwd()}")
+        
+        if os.path.exists("files/input"):
+            print(f"Contenido de files/input: {os.listdir('files/input')}")
+        else:
+            print("ERROR: No existe el directorio files/input")
+            return
+        
+        # Cargar y limpiar datos
+        print("\n2. Cargando y limpiando datos...")
+        
+        # Intentar diferentes nombres de archivos
+        train_files = [
+            "files/input/train_data.csv.zip",
+            "files/input/train_data.csv",
+            "files/input/train.csv.zip",
+            "files/input/train.csv"
+        ]
+        
+        test_files = [
+            "files/input/test_data.csv.zip",
+            "files/input/test_data.csv",
+            "files/input/test.csv.zip",
+            "files/input/test.csv"
+        ]
+        
+        train_file = None
+        test_file = None
+        
+        for f in train_files:
+            if os.path.exists(f):
+                train_file = f
+                break
+        
+        for f in test_files:
+            if os.path.exists(f):
+                test_file = f
+                break
+        
+        if not train_file or not test_file:
+            print("ERROR: No se encontraron archivos de datos")
+            return
+        
+        print(f"Usando archivo de entrenamiento: {train_file}")
+        print(f"Usando archivo de prueba: {test_file}")
+        
+        # Cargar datos
+        train = cargar_y_limpiar(train_file)
+        test = cargar_y_limpiar(test_file)
+        
+        # Dividir en X e y
+        print("\n3. Dividiendo datos en características y variable objetivo...")
+        x_train, y_train = dividir_xy(train)
+        x_test, y_test = dividir_xy(test)
+
+        # Crear y entrenar modelo
+        print("\n4. Creando y entrenando modelo...")
+        modelo = crear_modelo()
+        
+        print("Iniciando entrenamiento (esto puede tomar varios minutos)...")
+        modelo.fit(x_train, y_train)
+        
+        print(f"✓ Entrenamiento completado!")
+        print(f"Mejores parámetros: {modelo.best_params_}")
+        print(f"Mejor score (balanced accuracy): {modelo.best_score_:.4f}")
+
+        # Guardar modelo
+        print("\n5. Guardando modelo...")
+        guardar_modelo(modelo, "files/models/model.pkl.gz")
+        
+        # Guardar métricas
+        print("\n6. Calculando y guardando métricas...")
+        guardar_metricas(modelo.best_estimator_, x_train, y_train, x_test, y_test, "files/output/metrics.json")
+        
+        print("\n=== PROCESO COMPLETADO EXITOSAMENTE ===")
+        
+        # Verificación final
+        print("\n7. Verificación final de archivos...")
+        model_path = "files/models/model.pkl.gz"
+        metrics_path = "files/output/metrics.json"
+        
+        if os.path.exists(model_path):
+            print(f"✓ Modelo guardado: {model_path} ({os.path.getsize(model_path)} bytes)")
+        else:
+            print(f"✗ ERROR: No se encontró el modelo en {model_path}")
+            
+        if os.path.exists(metrics_path):
+            print(f"✓ Métricas guardadas: {metrics_path} ({os.path.getsize(metrics_path)} bytes)")
+        else:
+            print(f"✗ ERROR: No se encontraron las métricas en {metrics_path}")
+        
+    except Exception as e:
+        print(f"\n✗ ERROR EN EL PROCESO PRINCIPAL: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+if __name__ == "__main__":
+    main()
